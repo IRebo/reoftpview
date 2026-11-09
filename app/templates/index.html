@@ -142,11 +142,11 @@
 
       <!-- Native HTML5 Video (Direct Range-Seek) -->
       <div class="relative bg-black flex items-center justify-center aspect-video">
-        <video id="player" controls autoplay playsinline preload="metadata" class="w-full h-full object-contain"></video>
+        <video id="player" controls autoplay playsinline crossorigin="anonymous" preload="metadata" class="w-full h-full object-contain"></video>
       </div>
 
       <!-- Modal Footer & Controls -->
-      <div class="px-4 py-2.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-xs text-slate-300">
+      <div class="px-4 py-2.5 bg-slate-900 border-t border-slate-800 flex items-center justify-between text-xs text-slate-300 flex-wrap gap-2">
         <div class="flex items-center space-x-2">
           <button onclick="playPrevClip()" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700" title="Previous clip (Left Arrow)">
             <i class="fa-solid fa-backward-step mr-1"></i> Prev
@@ -156,13 +156,30 @@
           </button>
         </div>
 
-        <div class="flex items-center space-x-3">
-          <span class="text-slate-500">Speed:</span>
-          <div class="flex space-x-1">
-            <button onclick="setSpeed(0.5)" class="speed-btn px-2 py-0.5 rounded bg-slate-800 border border-slate-700">0.5x</button>
-            <button onclick="setSpeed(1.0)" class="speed-btn px-2 py-0.5 rounded bg-emerald-600 font-bold border border-emerald-500">1x</button>
-            <button onclick="setSpeed(2.0)" class="speed-btn px-2 py-0.5 rounded bg-slate-800 border border-slate-700">2x</button>
-            <button onclick="setSpeed(4.0)" class="speed-btn px-2 py-0.5 rounded bg-slate-800 border border-slate-700">4x</button>
+        <div class="flex items-center space-x-4">
+          <!-- Audio Boost Controls -->
+          <div class="flex items-center space-x-1.5">
+            <i class="fa-solid fa-volume-high text-slate-400"></i>
+            <span class="text-slate-500">Boost:</span>
+            <div class="flex space-x-1">
+              <button onclick="setBoost(1.0)" data-boost="1.0" class="boost-btn px-2 py-0.5 rounded bg-emerald-600 font-bold border border-emerald-500 text-white" title="Standard volume (100%)">1x</button>
+              <button onclick="setBoost(2.5)" data-boost="2.5" class="boost-btn px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300" title="2.5x volume boost (+8 dB)">2.5x</button>
+              <button onclick="setBoost(5.0)" data-boost="5.0" class="boost-btn px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300" title="5x volume boost (+14 dB)">5x</button>
+              <button onclick="setBoost(10.0)" data-boost="10.0" class="boost-btn px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300" title="10x volume boost (+20 dB)">10x</button>
+            </div>
+          </div>
+
+          <div class="h-4 w-px bg-slate-800"></div>
+
+          <!-- Speed Controls -->
+          <div class="flex items-center space-x-1.5">
+            <span class="text-slate-500">Speed:</span>
+            <div class="flex space-x-1">
+              <button onclick="setSpeed(0.5)" class="speed-btn px-2 py-0.5 rounded bg-slate-800 border border-slate-700">0.5x</button>
+              <button onclick="setSpeed(1.0)" class="speed-btn px-2 py-0.5 rounded bg-emerald-600 font-bold border border-emerald-500">1x</button>
+              <button onclick="setSpeed(2.0)" class="speed-btn px-2 py-0.5 rounded bg-slate-800 border border-slate-700">2x</button>
+              <button onclick="setSpeed(4.0)" class="speed-btn px-2 py-0.5 rounded bg-slate-800 border border-slate-700">4x</button>
+            </div>
           </div>
         </div>
       </div>
@@ -378,7 +395,52 @@
       document.getElementById("clip-count-label").innerText = `0 clips`;
     }
 
-    // 5. Video Player Modal
+    // 5. Video Player Modal & Web Audio Boost
+    let audioCtx = null;
+    let gainNode = null;
+    let currentBoost = 2.5; // Default to 2.5x boost for surveillance cameras
+
+    function ensureAudioBoost() {
+      try {
+        if (!audioCtx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (AudioContext) {
+            audioCtx = new AudioContext();
+            const player = document.getElementById("player");
+            const source = audioCtx.createMediaElementSource(player);
+            gainNode = audioCtx.createGain();
+            gainNode.gain.value = currentBoost;
+            source.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+          }
+        }
+        if (audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+      } catch (err) {
+        console.warn("Audio boost init:", err);
+      }
+    }
+
+    function setBoost(multiplier) {
+      currentBoost = multiplier;
+      ensureAudioBoost();
+      if (gainNode) {
+        gainNode.gain.value = multiplier;
+      }
+      updateBoostButtons(multiplier);
+    }
+
+    function updateBoostButtons(multiplier) {
+      document.querySelectorAll(".boost-btn").forEach(btn => {
+        if (parseFloat(btn.dataset.boost) === multiplier) {
+          btn.className = "boost-btn px-2 py-0.5 rounded bg-emerald-600 font-bold border border-emerald-500 text-white";
+        } else {
+          btn.className = "boost-btn px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300";
+        }
+      });
+    }
+
     function openPlayer(index) {
       if (index < 0 || index >= currentRecordings.length) return;
       currentClipIndex = index;
@@ -396,9 +458,17 @@
 
       player.src = streamUrl;
       player.playbackRate = 1.0;
+      player.muted = false;
+      player.volume = 1.0;
       updateSpeedButtons(1.0);
+      updateBoostButtons(currentBoost);
       modal.classList.remove("hidden");
-      player.play().catch(e => console.log("Autoplay blocked:", e));
+
+      ensureAudioBoost();
+
+      player.play().catch(e => {
+        console.log("Unmuted autoplay restricted, user click needed to unmute:", e);
+      });
     }
 
     function closeModal() {

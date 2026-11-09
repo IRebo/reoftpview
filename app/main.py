@@ -124,7 +124,8 @@ async def stream_video(rel_path: str):
     return FileResponse(
         path=str(abs_path),
         media_type="video/mp4",
-        filename=abs_path.name
+        filename=abs_path.name,
+        headers={"Access-Control-Allow-Origin": "*"}
     )
 
 @app.get("/api/thumb/{rel_path:path}")
