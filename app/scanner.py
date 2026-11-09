@@ -1,0 +1,145 @@
+import os
+import re
+import hashlib
+import subprocess
+import logging
+from pathlib import Path
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger("reoftpview.scanner")
+
+# Reolink timestamp regex: matches e.g. _20261109190037.mp4
+REOLINK_TIME_REGEX = re.compile(r"(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})")
+
+def parse_recording_timestamp(filename: str, fallback_mtime: float) -> datetime:
+    """Extract timestamp from Reolink filename or fallback to file modification time."""
+    match = REOLINK_TIME_REGEX.search(filename)
+    if match:
+        try:
+            year, month, day, hour, minute, second = map(int, match.groups())
+            return datetime(year, month, day, hour, minute, second)
+        except ValueError:
+            pass
+    return datetime.fromtimestamp(fallback_mtime)
+
+def format_file_size(size_bytes: int) -> str:
+    """Format bytes into readable string (KB, MB, GB)."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+
+class StorageScanner:
+    def __init__(self, recordings_path: str, cache_path: str = "/tmp/reoftpview_cache"):
+        self.recordings_path = Path(recordings_path)
+        self.cache_path = Path(cache_path)
+        self.cache_path.mkdir(parents=True, exist_ok=True)
+
+    def get_cameras(self) -> List[Dict[str, Any]]:
+        """List all camera folders under recordings_path."""
+        if not self.recordings_path.exists():
+            return []
+
+        cameras = []
+        for entry in sorted(self.recordings_path.iterdir()):
+            if entry.is_dir() and not entry.name.startswith("."):
+                # Count total mp4 files for camera
+                video_count = sum(1 for _ in entry.glob("**/*.mp4"))
+                cameras.append({
+                    "id": entry.name,
+                    "name": entry.name.replace("_", " ").title(),
+                    "video_count": video_count
+                })
+        return cameras
+
+    def get_available_dates(self, camera_id: str) -> List[str]:
+        """Find all distinct YYYY-MM-DD dates with recordings for a camera."""
+        cam_dir = self.recordings_path / camera_id
+        if not cam_dir.exists():
+            return []
+
+        dates = set()
+        for f in cam_dir.glob("**/*.mp4"):
+            stat = f.stat()
+            dt = parse_recording_timestamp(f.name, stat.st_mtime)
+            dates.add(dt.strftime("%Y-%m-%d"))
+
+        return sorted(list(dates), reverse=True)
+
+    def get_recordings_for_date(self, camera_id: str, date_str: str) -> List[Dict[str, Any]]:
+        """List all recordings for a camera on a specific YYYY-MM-DD."""
+        cam_dir = self.recordings_path / camera_id
+        if not cam_dir.exists():
+            return []
+
+        recordings = []
+        for f in cam_dir.glob("**/*.mp4"):
+            stat = f.stat()
+            dt = parse_recording_timestamp(f.name, stat.st_mtime)
+            if dt.strftime("%Y-%m-%d") == date_str:
+                rel_path = f.relative_to(self.recordings_path).as_posix()
+                file_id = hashlib.md5(rel_path.encode()).hexdigest()
+
+                # Check if companion jpg exists
+                companion_jpg = f.with_suffix(".jpg")
+                has_companion_jpg = companion_jpg.exists()
+
+                recordings.append({
+                    "id": file_id,
+                    "filename": f.name,
+                    "rel_path": rel_path,
+                    "time": dt.strftime("%H:%M:%S"),
+                    "datetime": dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "size_bytes": stat.st_size,
+                    "size_formatted": format_file_size(stat.st_size),
+                    "has_thumbnail": has_companion_jpg,
+                    "timestamp": dt.timestamp()
+                })
+
+        # Sort by timestamp descending (newest first)
+        recordings.sort(key=lambda x: x["timestamp"], reverse=True)
+        return recordings
+
+    def get_absolute_path(self, rel_path: str) -> Optional[Path]:
+        """Resolve a relative path securely preventing directory traversal."""
+        full_path = (self.recordings_path / rel_path).resolve()
+        if self.recordings_path.resolve() in full_path.parents or full_path == self.recordings_path.resolve():
+            if full_path.exists():
+                return full_path
+        return None
+
+    def get_or_create_thumbnail(self, video_path: Path) -> Optional[Path]:
+        """Return companion jpg if exists, or generate frame via ffmpeg into cache."""
+        # 1. Companion thumbnail uploaded by camera
+        companion = video_path.with_suffix(".jpg")
+        if companion.exists():
+            return companion
+
+        # 2. Cached thumbnail generated by ffmpeg
+        cache_id = hashlib.md5(str(video_path).encode()).hexdigest()
+        thumb_path = self.cache_path / f"{cache_id}.jpg"
+        if thumb_path.exists():
+            return thumb_path
+
+        # 3. Generate thumbnail with ffmpeg
+        try:
+            cmd = [
+                "ffmpeg", "-y", "-ss", "00:00:01",
+                "-i", str(video_path),
+                "-vframes", "1",
+                "-vf", "scale=480:-1",
+                "-q:v", "4",
+                str(thumb_path)
+            ]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+            if thumb_path.exists():
+                return thumb_path
+        except Exception as e:
+            logger.warning(f"Failed to generate thumbnail for {video_path}: {e}")
+
+        return None

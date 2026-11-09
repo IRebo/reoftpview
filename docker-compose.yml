@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  # ==========================================================
+  # FTP Server to receive clips from Reolink cameras / doorbell
+  # ==========================================================
+  doorbell-ftp:
+    container_name: doorbell_ftp
+    image: stilliard/pure-ftpd:hardened
+    restart: unless-stopped
+    ports:
+      - "21:21"
+      - "30000-30009:30000-30009"
+    environment:
+      PUBLICHOST: "192.168.0.26"        # Portainer LXC local IP
+      FTP_USER_NAME: "doorbell"
+      FTP_USER_PASS: "reolink123"
+      FTP_USER_HOME: "/home/doorbell"
+      FTP_PASSIVE_PORTS: "30000:30009"
+    volumes:
+      - /mnt/raid/camera/doorbell_ftp:/home/doorbell
+
+  # ==========================================================
+  # ReoFTPView - Modern Web UI + Built-in 30-Day Retention
+  # ==========================================================
+  reoftpview:
+    container_name: reoftpview
+    build: .
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - RECORDINGS_PATH=/recordings
+      - RETENTION_DAYS=30               # Auto-deletes clips older than 30 days
+      - CLEANUP_INTERVAL_HOURS=6        # How often retention scanner runs
+    volumes:
+      # Read/write access so retention cleanup and UI clip deletion can work
+      - /mnt/raid/camera/doorbell_ftp:/recordings
