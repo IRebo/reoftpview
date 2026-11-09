@@ -197,10 +197,12 @@
       try {
         const res = await fetch("/api/status");
         const data = await res.json();
-        const text = `${data.storage.used_gb} GB / ${data.storage.total_gb} GB (${data.storage.used_pct}%)`;
+        const text = `Footage: ${data.footage.footage_formatted} (${data.footage.total_clips} clips) • Free: ${data.storage.free_gb} GB`;
+        const pill = document.getElementById("storage-pill");
         document.getElementById("storage-text").innerText = text;
         document.getElementById("storage-bar").style.width = `${Math.min(100, data.storage.used_pct)}%`;
-        document.getElementById("storage-pill").classList.remove("hidden");
+        pill.title = `Actual Footage: ${data.footage.footage_formatted} across ${data.footage.total_clips} clips\nRAID Disk Total: ${data.storage.total_gb} GB\nRAID Disk Used: ${data.storage.used_gb} GB (${data.storage.used_pct}%)\nRAID Disk Free: ${data.storage.free_gb} GB`;
+        pill.classList.remove("hidden");
       } catch (err) {
         console.error("Status load failed", err);
       }

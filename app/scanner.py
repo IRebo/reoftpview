@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import hashlib
 import subprocess
 import logging
@@ -39,6 +40,41 @@ class StorageScanner:
         self.recordings_path = Path(recordings_path)
         self.cache_path = Path(cache_path)
         self.cache_path.mkdir(parents=True, exist_ok=True)
+        self._cached_stats = None
+        self._cached_stats_time = 0
+
+    def get_storage_stats(self) -> Dict[str, Any]:
+        """Calculate actual footage size on disk across all cameras (cached for 30 seconds)."""
+        now = time.time()
+        if self._cached_stats and (now - self._cached_stats_time < 30):
+            return self._cached_stats
+
+        if not self.recordings_path.exists():
+            return {"footage_bytes": 0, "footage_formatted": "0 B", "total_clips": 0}
+
+        total_bytes = 0
+        total_clips = 0
+
+        for root, _, files in os.walk(self.recordings_path):
+            for f in files:
+                f_lower = f.lower()
+                if f_lower.endswith((".mp4", ".jpg", ".jpeg")):
+                    try:
+                        fp = Path(root) / f
+                        total_bytes += fp.stat().st_size
+                        if f_lower.endswith(".mp4"):
+                            total_clips += 1
+                    except OSError:
+                        pass
+
+        stats = {
+            "footage_bytes": total_bytes,
+            "footage_formatted": format_file_size(total_bytes),
+            "total_clips": total_clips
+        }
+        self._cached_stats = stats
+        self._cached_stats_time = now
+        return stats
 
     def get_cameras(self) -> List[Dict[str, Any]]:
         """List all camera folders under recordings_path."""

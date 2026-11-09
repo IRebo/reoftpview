@@ -81,10 +81,13 @@ async def get_status():
     except Exception:
         pass
 
+    footage_stats = await asyncio.to_thread(scanner.get_storage_stats)
+
     return {
         "recordings_path": RECORDINGS_PATH,
         "retention_days": RETENTION_DAYS,
         "cleanup_interval_hours": CLEANUP_INTERVAL_HOURS,
+        "footage": footage_stats,
         "storage": {
             "total_gb": round(total / (1024**3), 1),
             "used_gb": round(used / (1024**3), 1),
