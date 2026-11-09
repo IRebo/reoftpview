@@ -61,11 +61,14 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # --- Page Routes ---
 @app.get("/", response_class=HTMLResponse)
 async def index_page(request: Request):
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "retention_days": RETENTION_DAYS,
-        "recordings_path": RECORDINGS_PATH
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "retention_days": RETENTION_DAYS,
+            "recordings_path": RECORDINGS_PATH
+        }
+    )
 
 # --- API Routes ---
 @app.get("/api/status")
